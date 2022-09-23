@@ -6,15 +6,16 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.util.Optional;
-
 @Repository
 public interface RoomRepository extends JpaRepository<Room, String> {
     void delete(Room room);
 
-    //List<Room> findAllBySessionId(String sessionId);
 
-    Page<Room> findAll(Pageable pageable);
+    Page<Room> findByStatusOrderByModifiedAtDesc(Pageable pageable, boolean status);
 
-    Optional<Room> findBySessionId(String sessionId);
+
+
+    // Containing을 붙여주면 Like 검색이 가능
+    // %{keyword}%가 가능
+    Page<Room> findByRoomTitleContaining(String keyword, Pageable pageable);
 }
