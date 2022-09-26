@@ -3,9 +3,13 @@ package com.four.withtopia.api.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.four.withtopia.api.service.MemberService;
+import com.four.withtopia.config.expection.PrivateResponseBody;
 import com.four.withtopia.config.security.jwt.TokenProvider;
+import com.four.withtopia.db.repository.RefreshTokenRepository;
 import com.four.withtopia.dto.request.LoginRequestDto;
 import com.four.withtopia.dto.request.MemberRequestDto;
+import com.four.withtopia.dto.request.NicknameRequestDto;
+import com.four.withtopia.util.ResponseUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,7 +17,6 @@ import org.springframework.web.bind.annotation.*;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
-import javax.validation.Valid;
 
 @RequiredArgsConstructor
 @RestController
@@ -22,44 +25,46 @@ public class MemberController {
 
   private final MemberService memberService;
   private final TokenProvider tokenProvider;
+  private final RefreshTokenRepository refreshTokenRepository;
 
   @RequestMapping(value = "/member/signup", method = RequestMethod.POST)
-  public ResponseEntity<?> signup(@RequestBody @Valid MemberRequestDto requestDto) {
-    return memberService.createMember(requestDto);
+  public ResponseEntity<PrivateResponseBody> signup(@RequestBody MemberRequestDto requestDto) {
+    return new ResponseUtil<>().forSuccess(memberService.createMember(requestDto));
   }
 
   @RequestMapping(value = "/member/login", method = RequestMethod.POST)
-  public ResponseEntity<?> login(@RequestBody LoginRequestDto requestDto, HttpServletResponse response) {
-    return memberService.login(requestDto,response);
+  public ResponseEntity<PrivateResponseBody> login(@RequestBody LoginRequestDto requestDto, HttpServletResponse response) {
+    return new ResponseUtil<>().forSuccess(memberService.login(requestDto,response));
   }
 
   @RequestMapping(value = "/member/logout", method = RequestMethod.POST)
-  public ResponseEntity<?> logout(HttpServletRequest request) {
-    return memberService.logout(request);
+  public ResponseEntity<PrivateResponseBody> logout(HttpServletRequest request) {
+    return new ResponseUtil<>().forSuccess(memberService.logout(request));
   }
 
   @RequestMapping(value = "/member/login/kakao", method = RequestMethod.GET)
-  public ResponseEntity<?> kakaoLogin(@RequestParam(value="code") String code, HttpSession session) throws JsonProcessingException {
-    return memberService.kakaoLogin(code, session);
+  public ResponseEntity<PrivateResponseBody> kakaoLogin(@RequestParam(value="code") String code, HttpSession session) throws JsonProcessingException {
+    return new ResponseUtil<>().forSuccess(memberService.kakaoLogin(code, session));
   }
 
   @RequestMapping(value = "/member/login/google", method = RequestMethod.GET)
-  public ResponseEntity<?> googleLogin(@RequestParam(value="code") String code, HttpSession session) throws JsonProcessingException {
-    return memberService.googleLogin(code, session);
+  public ResponseEntity<PrivateResponseBody> googleLogin(@RequestParam(value="code") String code, HttpSession session) throws JsonProcessingException {
+    return new ResponseUtil<>().forSuccess(memberService.googleLogin(code, session));
   }
 
   @RequestMapping(value = "/member/changepw", method = RequestMethod.GET)
-  public ResponseEntity<?> changePw(@RequestBody MemberRequestDto requestDto){
-    return memberService.ChangePw(requestDto);
+  public ResponseEntity<PrivateResponseBody> changePw(@RequestBody MemberRequestDto requestDto){
+    return new ResponseUtil<>().forSuccess(memberService.ChangePw(requestDto));
   }
 
   @RequestMapping(value = "/member/nickname", method = RequestMethod.POST)
-  public ResponseEntity<?> existnick(@RequestBody String email){
-    return memberService.existnickname(email);
+  public ResponseEntity<PrivateResponseBody> existnick(@RequestBody NicknameRequestDto email){
+    return new ResponseUtil<>().forSuccess(memberService.existnickname(email.getNickname()));
   }
 
-  @RequestMapping(value = "/member/test", method = RequestMethod.GET)
-  public ResponseEntity<?> test1(HttpServletRequest request){
-    return ResponseEntity.ok(tokenProvider.getMemberFromAuthentication());
+  @RequestMapping(value = "/member/reissue", method = RequestMethod.GET)
+  public ResponseEntity<PrivateResponseBody> reissue(HttpServletRequest request, HttpServletResponse response) {
+    return new ResponseUtil<>().forSuccess(memberService.reissue(request, response));
   }
+
 }

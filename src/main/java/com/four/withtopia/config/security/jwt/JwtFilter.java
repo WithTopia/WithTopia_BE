@@ -58,24 +58,17 @@ public class JwtFilter extends OncePerRequestFilter {
 
 //        Session 의 토큰 값 가져오기
         String jwt = resolveToken(request);
-
-
-        System.out.println("----------------------토큰값-----------");
-        System.out.println(jwt);
-
+        System.out.println("---------------------------------------");
+        System.out.println("UsingMethod : "+request.getMethod());
+        System.out.println("UsingURL : "+request.getRequestURL());
+        System.out.println("AccessToken : "+jwt);
+        System.out.println("UsingIP : "+request.getLocalAddr());
+        System.out.println(request.getProtocol());
+        System.out.println("---------------------------------------");
 
         byte[] keyBytes = Decoders.BASE64.decode(SECRET_KEY);
         //바이트배열을 생성한 다음 키를 생성
         Key key = Keys.hmacShaKeyFor(keyBytes);
-//        유효한 토큰인지 확인 (리이슈를 위한 부분)
-        if (!StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
-//            Refresh token 유효성 확인 (True시 유효토큰)
-            if (tokenProvider.validateToken(resolveRefresh(request))) {
-//                access 토큰 리이슈 및 재발급
-                jwt = tokenProvider.ReissueAccessToken(resolveToken(request));
-                response.addHeader(AUTHORIZATION_HEADER,jwt);
-            }
-        }
 //     JWT 토큰이 정상적이라면 유저정보를 가져오는 부분
         if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
             //Payload 부분에는 토큰에 담을 정보가 들어있습니다. 여기에 담는 정보의 한 ‘조각’ 을 클레임(claim) 이라고 부름
@@ -88,6 +81,7 @@ public class JwtFilter extends OncePerRequestFilter {
             }
             System.out.println("----------------Claims-------------------");
             System.out.println(claims);
+            System.out.println("-----------------------------------------");
             if (claims.getExpiration().toInstant().toEpochMilli() < Instant.now().toEpochMilli()) {
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().println(

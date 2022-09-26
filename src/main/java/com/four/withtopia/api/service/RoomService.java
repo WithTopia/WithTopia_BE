@@ -9,21 +9,25 @@ import com.four.withtopia.db.domain.RoomMember;
 import com.four.withtopia.db.repository.RoomMemberRepository;
 import com.four.withtopia.db.repository.RoomRepository;
 import com.four.withtopia.dto.request.MakeRoomRequestDto;
+import com.four.withtopia.dto.request.RoomPasswordRequestDto;
+import com.four.withtopia.dto.request.RoomTitleRenameDto;
 import com.four.withtopia.dto.response.RoomCreateResponseDto;
 import com.four.withtopia.dto.response.RoomMemberResponseDto;
+import com.four.withtopia.util.MemberCheckUtils;
 import io.openvidu.java.client.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import javax.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 
 
 @Service
@@ -32,11 +36,10 @@ public class RoomService {
 
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
+    private final MemberCheckUtils memberCheckUtils;
 
     // SDK의 진입점인 OpenVidu 개체
     private OpenVidu openVidu;
-    // 세션 이름과 OpenVidu 세션 개체를 페어링하기 위한 컬렉션
-    private Map<String, Session> mapSessions = new ConcurrentHashMap<>();
 
     // OpenVidu 서버가 수신하는 URL
     @Value("${openvidu.url}")
@@ -52,8 +55,18 @@ public class RoomService {
     }
 
     // 방 생성
-    // 완성 -> 배포해서 프론트가 테스트
-    public RoomCreateResponseDto createRoom(MakeRoomRequestDto makeRoomRequestDto, Member member) throws OpenViduJavaClientException, OpenViduHttpException {
+    public RoomCreateResponseDto createRoom(MakeRoomRequestDto makeRoomRequestDto, HttpServletRequest request) throws OpenViduJavaClientException, OpenViduHttpException {
+
+        //토큰 검증 및 멤버 객체 가져오기
+        Member member = memberCheckUtils.checkMember(request);
+
+        String Pattern =  "^[a-zA-Z\\d!@#$%^&*]{4,12}$";
+        System.out.println(makeRoomRequestDto.getPassword().matches(Pattern));
+
+
+        if(!makeRoomRequestDto.isStatus()&&!makeRoomRequestDto.getPassword().matches(Pattern)){
+            throw new PrivateException(new ErrorCode(HttpStatus.OK,"200","비밀번호 양식이 맞지않습니다."));
+        }
 
         // 새로운 채팅방 생성
         RoomCreateResponseDto newToken = createNewToken(member);
@@ -67,6 +80,7 @@ public class RoomService {
                 .masterId(member.getNickName())
                 .maxMember(makeRoomRequestDto.getMaxMember())
                 .status(makeRoomRequestDto.isStatus())
+                .password(makeRoomRequestDto.getPassword())
                 .build();
 
 
@@ -80,6 +94,7 @@ public class RoomService {
                 .nickname(member.getNickName())
                 .email(member.getEmail())
                 .ProfileImage(member.getProfileImage())
+                .enterRoomToken(savedRoom.getSessionId())
                 .build();
 
         // 채팅방 인원 저장하기
@@ -112,9 +127,8 @@ public class RoomService {
         roomRepository.save(room);
 
         // 저장된 채팅방의 roomId는 OpenVidu 채팅방의 세션 아이디로써 생성 후 바로 해당 채팅방의 세션 아이디와
-        // 오픈 비두 서버에서 미디어 데이터를 받아올 떄 사용할 토큰을 리턴해줍니다.
-        // 채팅방 생성 후 최초 채팅방 생성자는 채팅방에 즉시 입장할 것으로 예상 -> 채팅방이 보여지기 위한 정보들을 리턴해줘야할 것 같습니다.
-        // TODO: 정확한 와이어 프레임을 확인하지 못했으나 프론트에서 화면에 보여지기위한 데이터가 부족하므로 프론트와 함께 API 명세 재작성 요함 -> ex) 체팅방 명
+        // 오픈 비두 서버에서 미디어 데이터를 받아올 떄 사용할 토큰을 리턴.
+        // 채팅방 생성 후 최초 채팅방 생성자는 채팅방에 즉시 입장할 것으로 예상 -> 채팅방이 보여지기 위한 정보들을 리턴
         return RoomCreateResponseDto.builder()
                 .sessionId(savedRoom.getSessionId())
                 .roomTitle(savedRoom.getRoomTitle())
@@ -124,60 +138,100 @@ public class RoomService {
                 .roomMemberResponseDtoList(roomMemberResponseDtoList)
                 .status(savedRoom.isStatus())
                 .token(newToken.getToken())
+                .password(savedRoom.getPassword())
                 .build();
     }
 
     // 전체 방 조회하기
     public Page<Room> getAllRooms(int page) {
-        PageRequest pageable = PageRequest.of(page-1,7);
+        PageRequest pageable = PageRequest.of(page-1,6);
 
-        Page<Room> all = roomRepository.findAll(pageable);
+        Page<Room> allRooms = roomRepository.findAllByOrderByModifiedAtAsc(pageable);
 
+        return allRooms;
+    }
 
+    // 키워드로 채팅방 검색하기
+    public Page<Room> searchRoom(String keyword, int page) {
+        PageRequest pageable = PageRequest.of(page-1,6);
 
-        return all;
+        Page<Room> searchRoom = roomRepository.findByRoomTitleContainingOrderByModifiedAtAsc(keyword, pageable);
+
+        // 검색 결과가 없다면
+        if (searchRoom.isEmpty()){
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","검색 결과가 없습니다."));
+        }
+
+        return searchRoom;
+
     }
 
     // 방장 방 나가기
-    public void outRoom(String sessionId, Member member){
+    public String outRoom(String sessionId, HttpServletRequest request){
+
+        //토큰 검증 및 멤버 객체 가져오기
+        Member member = memberCheckUtils.checkMember(request);
 
         // 채팅방 찾기
         Room room = roomRepository.findById(sessionId).orElseThrow(
-                () -> new PrivateException(ErrorCode.NOT_FOUND_ROOM));
+                () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","해당 방이 없습니다.")));
 
         // 방장인 지 확인
         if (room.validateMember(member)){
-            throw new PrivateException(ErrorCode.MEMBER_NOT_AUTH_ERROR_ROOM);
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방장이 아닙니다."));
         }
         roomRepository.delete(room);
+
+        return "Success";
     }
 
     // 방 접속
-    public RoomMemberResponseDto getRoomData(String SessionId, Member member) throws OpenViduJavaClientException, OpenViduHttpException {
+    public RoomMemberResponseDto getRoomData(String SessionId, HttpServletRequest request, RoomPasswordRequestDto password) throws OpenViduJavaClientException, OpenViduHttpException {
+
+        //토큰 검증 및 멤버 객체 가져오기
+        Member member = memberCheckUtils.checkMember(request);
 
         // 방이 있는 지 확인
         Room room = roomRepository.findById(SessionId).orElseThrow(
-                () -> new PrivateException(ErrorCode.NOT_FOUND_ROOM));
+                () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","해당 방이 없습니다.")));
 
         // 방 인원 초과 시
-        if (room.getCntMember() > room.getMaxMember()){
-            throw new PrivateException(ErrorCode.ROOM_IS_FULL);
+        if (room.getCntMember() >= room.getMaxMember()){
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 가득찼습니다."));
         }
 
+        // 룸 멤버 있는 지 확인
+        Optional<RoomMember> alreadyRoomMember = roomMemberRepository.findBySessionIdAndNickname(SessionId,member.getNickName());
+        if (alreadyRoomMember.isPresent()){
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","이미 입장한 멤버입니다."));
+        }
+
+        // 방에 비밀번호 있는 지 확인
+        if (!room.isStatus()){  // 방이 private인 지 확인
+            if (null == password.getPassword()){    // 패스워드를 입력 안했을 때 에러 발생
+                throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST, "400", "비밀번호를 입력해주세요."));
+            }
+            if (!room.getPassword().equals(password.getPassword())){  // 비밀번호가 틀리면 에러 발생
+                throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400", "비밀번호가 틀립니다."));
+            }
+        }
+
+
         //채팅방 입장 시 토큰 발급
-        enterRoomCreateSession(member,room.getSessionId());
+        String enterRoomToken = enterRoomCreateSession(member,room.getSessionId());
 
         // 채팅방 인원
-        RoomMember roomMembers = RoomMember.builder()
+        RoomMember roomMember = RoomMember.builder()
                 .sessionId(room.getSessionId())
                 .member(member.getMemberId())
                 .nickname(member.getNickName())
                 .email(member.getEmail())
                 .ProfileImage(member.getProfileImage())
+                .enterRoomToken(enterRoomToken)
                 .build();
 
         // 채팅방 인원 저장하기
-        roomMemberRepository.save(roomMembers);
+        roomMemberRepository.save(roomMember);
 
         boolean roomMaster = false;
         List<RoomMember> roomMemberList = roomMemberRepository.findAllBySessionId(room.getSessionId());
@@ -185,16 +239,16 @@ public class RoomService {
         List<RoomMemberResponseDto> roomMemberResponseDtoList = new ArrayList<>();
 
         // 채팅방 인원 추가
-        for (RoomMember roomMember : roomMemberList){
+        for (RoomMember addRoomMember : roomMemberList){
             // 방장일 시
             if (member != null){
-                roomMaster = Objects.equals(roomMember.getNickname(), member.getNickName());
+                roomMaster = Objects.equals(addRoomMember.getNickname(), member.getNickName());
             }
             // 방장이 아닐 시
             else {
                 roomMaster = false;
             }
-            roomMemberResponseDtoList.add(new RoomMemberResponseDto(roomMember,roomMaster));
+            roomMemberResponseDtoList.add(new RoomMemberResponseDto(addRoomMember,roomMaster));
 
         }
 
@@ -205,46 +259,68 @@ public class RoomService {
         roomRepository.save(room);
 
         return RoomMemberResponseDto.builder()
-                .roomMemberId(roomMembers.getRoomMemberId())
-                .sessionId(roomMembers.getSessionId())
-                .member(roomMembers.getMember())
-                .nickname(roomMembers.getNickname())
-                .email(roomMembers.getEmail())
-                .ProfileImage(roomMembers.getProfileImage())
+                .roomMemberId(roomMember.getRoomMemberId())
+                .sessionId(roomMember.getSessionId())
+                .member(roomMember.getMember())
+                .nickname(roomMember.getNickname())
+                .email(roomMember.getEmail())
+                .ProfileImage(roomMember.getProfileImage())
+                .enterRoomToken(roomMember.getEnterRoomToken())
                 .roomMaster(roomMaster)
                 .build();
     }
-/*
+
     // 일반 멤버 나가기
-    public void outRoomMember(String sessionId, Member member) {
+    public String outRoomMember(String sessionId, HttpServletRequest request) {
+
+        //토큰 검증 및 멤버 객체 가져오기
+        Member member = memberCheckUtils.checkMember(request);
+
         // 방이 있는 지 확인
         Room room = roomRepository.findById(sessionId).orElseThrow(
-                () -> new PrivateException(ErrorCode.NOT_FOUND_ROOM));
+                () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 존재하지않습니다."))
+        );
 
-        roomMemberRepository.delete(member);
+        // 룸 멤버 찾기
+        RoomMember roomMember = roomMemberRepository.findBySessionIdAndNickname(sessionId,member.getNickName()).orElseThrow(
+                () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방에 있는 멤버가 아닙니다."))
+        );
 
+        // 룸 멤버 삭제
+        roomMemberRepository.delete(roomMember);
+
+        // 룸 멤버 수 변경
+        room.updateCntMember(room.getCntMember() -1);
+
+        // 룸 변경사항 저장
+        roomRepository.save(room);
+
+        return "Success";
     }
-*/
-
 
     // 방제 수정
-    public String renameRoom(String roomId, Member member, String roomTitle) {
+    public String renameRoom(String roomId, HttpServletRequest request, RoomTitleRenameDto roomTitle) {
+
+        //토큰 검증 및 멤버 객체 가져오기
+        Member member = memberCheckUtils.checkMember(request);
+
         // 채팅방 찾기
         Room room = roomRepository.findById(roomId).orElseThrow(
-                () -> new PrivateException(ErrorCode.NOT_FOUND_ROOM));
+                () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 존재하지않습니다.")));
 
         // 방장인 지 확인
         if (room.validateMember(member)){
-            throw new PrivateException(ErrorCode.MEMBER_NOT_AUTH_ERROR_ROOM);
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 존재하지않습니다."));
         }
 
-        room.rename(roomTitle);
+        room.rename(roomTitle.getRoomTitle());
         roomRepository.save(room);
 
         // 방제 바꾸기
         return room.getRoomTitle();
 
     }
+
     // 채팅방 생성 시 토큰 발급
     private RoomCreateResponseDto createNewToken(Member member) throws OpenViduJavaClientException, OpenViduHttpException {
 
@@ -290,10 +366,10 @@ public class RoomService {
             }
         }
         if (session == null){
-            throw new PrivateException(ErrorCode.NOT_FOUND_ROOM);
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 존재하지않습니다."));
         }
 
-        // 2. Openvidu에 유저 토큰 발급 요청 : 오픈비두 서버에 요청 유저가 타겟 채팅방에 입장할 수 있는 토큰을 발급해주세요 요청한다.
+        // 2. Openvidu에 유저 토큰 발급 요청 : 오픈비두 서버에 요청 유저가 타겟 채팅방에 입장할 수 있는 토큰을 발급 요청
         //토큰을 가져옴
         return session.createConnection(connectionProperties).getToken();
     }

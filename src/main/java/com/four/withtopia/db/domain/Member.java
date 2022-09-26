@@ -8,6 +8,7 @@ import org.hibernate.Hibernate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import javax.persistence.*;
+import java.util.List;
 import java.util.Objects;
 
 @NoArgsConstructor
@@ -43,6 +44,15 @@ public class Member extends Timestamped {
     @Column
     private String googleId;
 
+    @Column
+    @Builder.Default
+    private long likeCount = 0;
+
+    // 친구 리스트
+    @OneToMany(mappedBy = "myNickname", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Friend> friends;
+
+    @Builder
     public Member(MemberRequestDto requestDto,String password,String image) {
         this.nickName = requestDto.getNickname();
         this.email = requestDto.getEmail();
@@ -98,4 +108,7 @@ public class Member extends Timestamped {
         this.isDelete = true;
     }
 
+    public void updatePopularity(Long likCnt){
+        this.likeCount = likCnt;
+    }
 }
