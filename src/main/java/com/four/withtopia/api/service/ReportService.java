@@ -6,7 +6,9 @@ import com.four.withtopia.db.domain.Member;
 import com.four.withtopia.db.domain.Report;
 import com.four.withtopia.db.repository.MemberRepository;
 import com.four.withtopia.db.repository.ReportRepository;
+import com.four.withtopia.db.repository.RoomMemberRepository;
 import com.four.withtopia.dto.request.ReportRequestDto;
+import com.four.withtopia.dto.response.RoomMemberResponseDto;
 import com.four.withtopia.util.InsertImageUtil;
 import com.four.withtopia.util.MailUtils;
 import com.four.withtopia.util.MemberCheckUtils;
@@ -20,15 +22,16 @@ import javax.mail.MessagingException;
 import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.time.LocalDate;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+
+import static java.util.stream.Collectors.toList;
 
 @Service
 @RequiredArgsConstructor
 public class ReportService {
     private final ReportRepository reportRepository;
+    private final MemberRepository memberRepository;
+    private final RoomMemberRepository roomMemberRepository;
     private final MemberCheckUtils memberCheckUtils;
     private final InsertImageUtil insertImageUtil;
     private final JavaMailSenderImpl mailSender;
@@ -39,11 +42,14 @@ public class ReportService {
         // 토큰 검증
         Member reportBy = memberCheckUtils.checkMember(request);
 
+        Member reportTo = memberRepository.findByNickName(requestDto.getToNickname()).orElseThrow(()
+                -> new PrivateException(new ErrorCode(HttpStatus.OK,"200","해당 유저가 세션에 없습니다.")));
+
         if(requestDto.getImage() != null){
             String imgUrl = insertImageUtil.insertImage(requestDto.getImage());
             Report newReport = Report.builder()
-                    .reportTo(requestDto.getNickname())
-                    .reportToId(requestDto.getMemberId())
+                    .reportTo(reportTo.getNickName())
+                    .reportToId(reportTo.getMemberId())
                     .reportBy(reportBy.getNickName())
                     .reportById(reportBy.getMemberId())
                     .content(requestDto.getContent())
@@ -58,8 +64,8 @@ public class ReportService {
 
         // report 추가하기
         Report newReport = Report.builder()
-                .reportTo(requestDto.getNickname())
-                .reportToId(requestDto.getMemberId())
+                .reportTo(reportTo.getNickName())
+                .reportToId(reportTo.getMemberId())
                 .reportBy(reportBy.getNickName())
                 .reportById(reportBy.getMemberId())
                 .content(requestDto.getContent())
@@ -94,6 +100,13 @@ public class ReportService {
         } catch (MessagingException | UnsupportedEncodingException e) {
             throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","메일 발송에 실패했습니다."));
         }
+    }
+
+    public List<RoomMemberResponseDto> ShowRoomMember(String SessionID) {
+        return roomMemberRepository.findAllBySessionId(SessionID)
+                .stream()
+                .map(RoomMemberResponseDto::new)
+                .collect(toList());
     }
 
 }
