@@ -7,6 +7,7 @@ import com.four.withtopia.config.security.jwt.TokenProvider;
 import com.four.withtopia.db.domain.Member;
 import com.four.withtopia.db.domain.ProfileImage;
 import com.four.withtopia.db.domain.RefreshToken;
+import com.four.withtopia.db.domain.Report;
 import com.four.withtopia.db.repository.MemberRepository;
 import com.four.withtopia.db.repository.ProfileImageRepository;
 import com.four.withtopia.dto.request.GoogleUserInfoDto;
@@ -18,7 +19,6 @@ import com.four.withtopia.util.MemberCheckUtils;
 import com.four.withtopia.util.ValidationUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,9 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
+import java.util.*;
 
 @RequiredArgsConstructor
 @Service
@@ -59,6 +57,9 @@ public class MemberService {
     if (!member.validatePassword(passwordEncoder, requestDto.getPassword())) {
       throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","로그인에 실패했습니다."));
     }
+    if(member.isSuspend()){
+      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","정지된 계정입니다."));
+    }
 
     response.addHeader("Authorization","Bearer " + tokenProvider.GenerateAccessToken(member));
     response.addHeader("RefreshToken",tokenProvider.GenerateRefreshToken(member));
@@ -78,7 +79,7 @@ public class MemberService {
     return tokenProvider.deleteRefreshToken(member);
   }
 //  카카오 로그인
-  public MemberResponseDto kakaoLogin(String code, HttpSession session) throws JsonProcessingException {
+  public MemberResponseDto kakaoLogin(String code, HttpServletResponse response) throws JsonProcessingException {
     // 인가코드 받아서 카카오 엑세스 토큰 받기
     String kakaoAccessToken = kakaoService.getKakaoAccessToken(code);
     // 카카오 엑세스 토큰으로 유저 정보 받아오기
@@ -86,7 +87,7 @@ public class MemberService {
     // 회원가입 필요 시 회원 가입
     Member createMember = kakaoService.createKakaoMember(kakaoUserInfo);
     // 로그인 - 토큰 헤더에 넣어주기
-    socialLogin(createMember, session);
+    socialLogin(createMember, response);
     // MemberResponseDto
     MemberResponseDto responseDto = MemberResponseDto.createSocialMemberResponseDto(createMember);
 
@@ -94,7 +95,7 @@ public class MemberService {
   }
 
 //  구글 로그인
-  public MemberResponseDto googleLogin(String code, HttpSession session) throws JsonProcessingException {
+  public MemberResponseDto googleLogin(String code, HttpServletResponse response) throws JsonProcessingException {
     // 인가코드 받아서 구글 엑세스 토큰 받기
     String googleAccessToken = googleService.getGoogleAccessToken(code);
     // 구글 엑세스 토큰으로 유저 정보 받아오기
@@ -102,7 +103,7 @@ public class MemberService {
     // 회원가입 필요시 회원가입
     Member createMember = googleService.createGoogleMember(googleUserInfo);
     // 로그인 - 토큰 헤더에 넣어주기
-    socialLogin(createMember, session);
+    socialLogin(createMember, response);
     // MemberResponseDto
     MemberResponseDto responseDto = MemberResponseDto.createSocialMemberResponseDto(createMember);
 
@@ -115,16 +116,16 @@ public class MemberService {
     return optionalMember.orElse(null);
   }
 
-  public void tokenToSessions(String access, String refresh, HttpSession session) {
-    session.setAttribute("Authorization", "Bearer " + access);
-    session.setAttribute("RefreshToken", refresh);
+  public void tokenToSessions(String access, String refresh, HttpServletResponse response) {
+    response.addHeader("Authorization", "Bearer " + access);
+    response.addHeader("RefreshToken", refresh);
   }
 
   // 소셜 로그인 - 토큰 만들어서 헤더에 넣어주기
-  public void socialLogin(Member socialUser, HttpSession session){
+  public void socialLogin(Member socialUser, HttpServletResponse response){
     String accessToken = tokenProvider.GenerateAccessToken(socialUser);
     String refreshToken = tokenProvider.GenerateRefreshToken(socialUser);
-    tokenToSessions(accessToken, refreshToken, session);
+    tokenToSessions(accessToken, refreshToken, response);
   }
 
     public String createMember(MemberRequestDto requestDto) {
@@ -134,6 +135,9 @@ public class MemberService {
         }
         if (validationUtil.nicknameExist(requestDto.getNickname())) {
             throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","이미 존재하는 닉네임 입니다."));
+        }
+        if (requestDto.getNickname().length() < 2 || requestDto.getNickname().length() > 12) {
+        throw new PrivateException(new ErrorCode(HttpStatus.OK, "200", "닉네임 양식에 맞지 않습니다."));
         }
 //        if (requestDto.getAuthKey() == null) {
 //            return ResponseEntity.ok("이메일 인증번호를 적어주세요.");
@@ -184,24 +188,53 @@ public class MemberService {
   @Transactional
   public Member reissue(HttpServletRequest request, HttpServletResponse response) {
     if (!tokenProvider.validateToken(request.getHeader("RefreshToken"))) {
-      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다."));
+      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다.1"));
     }
     Member member = tokenProvider.getMemberFromAuthentication();
     if (null == member) {
-      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다."));
+      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다.2"));
     }
-
-    Authentication authentication = tokenProvider.getAuthentication(request.getHeader("authorization"));
     RefreshToken refreshToken = tokenProvider.isPresentRefreshToken(member);
-
+    System.out.println("refreshment");
+    System.out.println(refreshToken.getValue());
+    System.out.println(request.getHeader("RefreshToken"));
+    System.out.println(!refreshToken.getValue().equals(request.getHeader("RefreshToken")));
     if (!refreshToken.getValue().equals(request.getHeader("RefreshToken"))) {
-      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다."));
+      throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","유효하지않은 토큰입니다.3"));
     }
-    String AccessToken = tokenProvider.GenerateRefreshToken(member);
-    String RefreshToken = tokenProvider.GenerateRefreshToken(member);
+    String AccessToken = tokenProvider.GenerateAccessToken(member);
     response.addHeader("Authorization", "Bearer " + AccessToken);
-    response.addHeader("RefreshToken",RefreshToken);
     return member;
+  }
+
+  // 계정 정지
+  public void memberSuspend(Long memberId){
+    Optional<Member> member = memberRepository.findByMemberId(memberId);
+    member.get().updateSuspend(true);
+    memberRepository.save(member.get());
+    System.out.println("member.get().isSuspend() = " + member.get().isSuspend());
+    reportResult();
+  }
+
+  @Transactional
+  public void reportResult(){
+    // 3일 간 정지
+    long suspendTime = 1000 * 60 * 60 * 24 * 3;
+
+    Timer suspend = new Timer();
+    TimerTask suspendTask = new TimerTask() {
+      @Override
+      public void run() {
+        // 멤버 지우기
+        Member suspendMember = memberRepository.findBySuspend(true);
+        suspendMember.updateSuspend(false);
+        memberRepository.save(suspendMember);
+        System.out.println("suspendMember.getSuspend() = " + suspendMember.isSuspend());
+        suspend.cancel();
+      }
+    };
+
+    suspend.schedule(suspendTask, suspendTime);
   }
 
 }

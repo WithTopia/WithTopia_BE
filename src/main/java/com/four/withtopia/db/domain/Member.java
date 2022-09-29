@@ -48,9 +48,9 @@ public class Member extends Timestamped {
     @Builder.Default
     private long likeCount = 0;
 
-    // 친구 리스트
-    @OneToMany(mappedBy = "myNickname", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Friend> friends;
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean suspend = false;
 
     @Builder
     public Member(MemberRequestDto requestDto,String password,String image) {
@@ -95,9 +95,19 @@ public class Member extends Timestamped {
     }
 
     // 멤버 프로필 업데이트
-    public void updateMember(ProfileUpdateRequestDto requestDto){
-        this.nickName = requestDto.getNickName();
-        this.profileImage = requestDto.getProfileImage();
+    public void updateMember(ProfileUpdateRequestDto requestDto, Member member){
+        if(requestDto.getNickName() == null || Objects.equals(requestDto.getNickName(), "")){
+            this.nickName = member.getNickName();
+            this.profileImage = requestDto.getProfileImage();
+        }
+        else if(requestDto.getProfileImage() == null || Objects.equals(requestDto.getProfileImage(), "")){
+            this.nickName = requestDto.getNickName();
+            this.profileImage = member.getProfileImage();
+        }
+        else{
+            this.nickName = requestDto.getNickName();
+            this.profileImage = requestDto.getProfileImage();
+        }
     }
 
     public void updatePw(String password){
@@ -110,5 +120,8 @@ public class Member extends Timestamped {
 
     public void updatePopularity(Long likCnt){
         this.likeCount = likCnt;
+    }
+    public void updateSuspend(boolean suspend){
+        this.suspend = suspend;
     }
 }

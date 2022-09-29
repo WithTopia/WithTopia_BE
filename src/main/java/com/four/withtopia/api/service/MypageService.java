@@ -1,10 +1,5 @@
 package com.four.withtopia.api.service;
 
-import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.model.CannedAccessControlList;
-import com.amazonaws.services.s3.model.ObjectMetadata;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.util.IOUtils;
 import com.four.withtopia.config.error.ErrorCode;
 import com.four.withtopia.config.expection.PrivateException;
 import com.four.withtopia.config.security.jwt.TokenProvider;
@@ -16,9 +11,9 @@ import com.four.withtopia.dto.request.ChangePasswordRequestDto;
 import com.four.withtopia.dto.request.ProfileUpdateRequestDto;
 import com.four.withtopia.dto.response.MypageResponseDto;
 import com.four.withtopia.dto.response.ProfileImageListResponseDto;
+import com.four.withtopia.util.InsertImageUtil;
 import com.four.withtopia.util.MemberCheckUtils;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -26,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletRequest;
-import java.io.ByteArrayInputStream;
+import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.*;
 
@@ -37,11 +32,8 @@ public class MypageService {
     private final MemberRepository memberRepository;
     private final TokenProvider tokenProvider;
     private final MemberCheckUtils memberCheckUtils;
+    private final InsertImageUtil insertImageUtil;
     private final ProfileImageRepository profileImageRepository;
-    private final AmazonS3Client amazonS3Client;
-
-    @Value("${cloud.aws.s3.bucket}")
-    private String bucketName;
 
     @Transactional(readOnly = true)
     public MypageResponseDto getMypage(HttpServletRequest request){
@@ -52,13 +44,34 @@ public class MypageService {
     }
 
     @Transactional
-    public MypageResponseDto updateMemberInfo(ProfileUpdateRequestDto requestDto, HttpServletRequest request){
+    public MypageResponseDto updateMemberInfo(ProfileUpdateRequestDto requestDto, HttpServletRequest request, HttpServletResponse response){
         // 토큰 검사
         Member member = memberCheckUtils.checkMember(request);
 
-        member.updateMember(requestDto);
+        // 만약 닉네임이 null이면
+        if(requestDto.getNickName()==null || requestDto.getNickName().isEmpty() || requestDto.getNickName().isBlank()){
+            requestDto.nicknameUpdateRequestDto(member.getNickName());
+            System.out.println("==========================================");
+            System.out.println(requestDto.getNickName());
+        }
+
+        // 닉네임 양식 확인
+        if (requestDto.getNickName().length() < 2 || requestDto.getNickName().length()  > 12){
+            response.addHeader("Authorization", request.getHeader("Authorization"));
+            response.addHeader("RefreshToken", request.getHeader("RefreshToken"));
+            throw new PrivateException(new ErrorCode(HttpStatus.OK, "200","닉네임 양식에 맞지 않습니다."));
+        }
+
+        member.updateMember(requestDto, member);
         memberRepository.save(member);
         MypageResponseDto responseDto = MypageResponseDto.createMypageResponseDto(member);
+
+        // 토큰 재발급
+        String accessToken = tokenProvider.GenerateAccessToken(member);
+        String refreshToken = tokenProvider.GenerateRefreshToken(member);
+
+        response.addHeader("Authorization", "Bearer " + accessToken);
+        response.addHeader("RefreshToken", refreshToken);
 
         return responseDto;
     }
@@ -128,23 +141,9 @@ public class MypageService {
         finalDelete.schedule(deleteTask, lateTime);
     }
 
-    public String insertImage(MultipartFile multipartFile) throws IOException {
-        if (multipartFile == null | multipartFile.isEmpty()){
-            throw new PrivateException(new ErrorCode(HttpStatus.NOT_FOUND,"400","이미지 파일이 없습니다"));
-        }
-        String fileName = multipartFile.getOriginalFilename();
-        ObjectMetadata objectMetadata = new ObjectMetadata();
-        objectMetadata.setContentType(multipartFile.getContentType());
-
-        byte[] bytes = IOUtils.toByteArray(multipartFile.getInputStream());
-        objectMetadata.setContentLength(bytes.length);
-        ByteArrayInputStream byteArrayIs = new ByteArrayInputStream(bytes);
-
-        amazonS3Client.putObject(new PutObjectRequest(bucketName, fileName, byteArrayIs, objectMetadata)
-                .withCannedAcl(CannedAccessControlList.PublicRead));
-        String imgurl = amazonS3Client.getUrl(bucketName, fileName).toString();
-
-        ProfileImage profileImage = new ProfileImage(imgurl);
+    public String insertProfileImage(MultipartFile multipartFile) throws IOException {
+        String imgUrl = insertImageUtil.insertImage(multipartFile);
+        ProfileImage profileImage = new ProfileImage(imgUrl);
 
         profileImageRepository.save(profileImage);
         return "이미지 업로드 성공";

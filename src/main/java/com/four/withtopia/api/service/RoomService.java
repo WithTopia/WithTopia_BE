@@ -3,9 +3,11 @@ package com.four.withtopia.api.service;
 
 import com.four.withtopia.config.error.ErrorCode;
 import com.four.withtopia.config.expection.PrivateException;
+import com.four.withtopia.db.domain.BenMember;
 import com.four.withtopia.db.domain.Member;
 import com.four.withtopia.db.domain.Room;
 import com.four.withtopia.db.domain.RoomMember;
+import com.four.withtopia.db.repository.BenMemberRepository;
 import com.four.withtopia.db.repository.RoomMemberRepository;
 import com.four.withtopia.db.repository.RoomRepository;
 import com.four.withtopia.dto.request.MakeRoomRequestDto;
@@ -37,6 +39,7 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final RoomMemberRepository roomMemberRepository;
     private final MemberCheckUtils memberCheckUtils;
+    private final BenMemberRepository benMemberRepository;
 
     // SDK의 진입점인 OpenVidu 개체
     private OpenVidu openVidu;
@@ -62,6 +65,10 @@ public class RoomService {
 
         String Pattern =  "^[a-zA-Z\\d!@#$%^&*]{4,12}$";
         System.out.println(makeRoomRequestDto.getPassword().matches(Pattern));
+
+        if (makeRoomRequestDto.getRoomTitle().length() < 2 || makeRoomRequestDto.getRoomTitle().length() > 14){
+            throw new PrivateException(new ErrorCode(HttpStatus.OK, "200","제목 양식에 맞지 않습니다."));
+        }
 
 
         if(!makeRoomRequestDto.isStatus()&&!makeRoomRequestDto.getPassword().matches(Pattern)){
@@ -142,20 +149,30 @@ public class RoomService {
                 .build();
     }
 
-    // 전체 방 조회하기
-    public Page<Room> getAllRooms(int page) {
-        PageRequest pageable = PageRequest.of(page-1,6);
-
-        Page<Room> allRooms = roomRepository.findAllByOrderByModifiedAtAsc(pageable);
-
-        return allRooms;
-    }
+//    // 전체 방 조회하기
+//    public Page<Room> getAllRooms(int page) {
+//        PageRequest pageable = PageRequest.of(page-1,6);
+//
+//        Page<Room> allRooms = roomRepository.findAllByOrderByModifiedAtAsc(pageable);
+//
+//        return allRooms;
+//    }
 
     // 키워드로 채팅방 검색하기
     public Page<Room> searchRoom(String keyword, int page) {
         PageRequest pageable = PageRequest.of(page-1,6);
 
-        Page<Room> searchRoom = roomRepository.findByRoomTitleContainingOrderByModifiedAtAsc(keyword, pageable);
+        System.out.println(keyword);
+        Page<Room> searchRoom;
+        if (keyword == null || keyword.isBlank() || keyword.isEmpty()) {
+            searchRoom = roomRepository.findAllByOrderByModifiedAtAsc(pageable);
+            return searchRoom;
+        } else {
+            if (keyword.length() < 2 || keyword.length() >14){
+                throw new PrivateException(new ErrorCode(HttpStatus.OK,"200","검색 양식에 맞지 않습니다."));
+            }
+            searchRoom = roomRepository.findByRoomTitleContainingOrderByModifiedAtAsc(keyword, pageable);
+        }
 
         // 검색 결과가 없다면
         if (searchRoom.isEmpty()){
@@ -195,6 +212,11 @@ public class RoomService {
         Room room = roomRepository.findById(SessionId).orElseThrow(
                 () -> new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","해당 방이 없습니다.")));
 
+        // 방에서 강퇴당한 멤버인지 확인
+        BenMember benMember = benMemberRepository.findByMemberId(member.getMemberId());
+        if(benMember != null){
+            throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","강퇴당한 방입니다."));
+        }
         // 방 인원 초과 시
         if (room.getCntMember() >= room.getMaxMember()){
             throw new PrivateException(new ErrorCode(HttpStatus.BAD_REQUEST,"400","방이 가득찼습니다."));
